@@ -96,9 +96,9 @@
 </template>
 
 <script lang="ts" setup>
-import { computed, ref, toRefs, Ref, watch } from 'vue';
+import { computed, ref, toRefs, Ref, watch, toRaw } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { debounce, partition } from 'lodash';
+import { debounce, partition, get, every } from 'lodash';
 import { Filter } from '@directus/shared/types';
 import { useApi, useStores } from '@directus/shared/composables';
 import { parseFilter, getEndpoint } from '@directus/shared/utils';
@@ -144,19 +144,23 @@ const { usePermissionsStore, useUserStore } = useStores();
 const { currentUser } = useUserStore();
 const { hasPermission } = usePermissionsStore();
 
+const relCollName = get(relationInfo, 'value.relatedCollection.collection');
+const relPrimaryKeyFieldName = get(relationInfo, 'value.relatedPrimaryKeyField.field');
+const junCollName = get(relationInfo, 'value.junctionCollection.collection');
+const junPrimaryKeyName = get(relationInfo, 'value.junctionPrimaryKeyField.field');
+const junFieldName = get(relationInfo, 'value.junctionField.field');
+const adminAccess = get(currentUser, 'role.admin_access', false);
+
 const createAllowed = computed(() => {
-	if (currentUser?.role.admin_access === true) return true;
-	if (!relationInfo.value || !props.allowCustom) return false;
-	return (
-		hasPermission(relationInfo.value.relatedCollection.collection, 'create') &&
-		hasPermission(relationInfo.value.junctionCollection.collection, 'create')
-	);
+	if (adminAccess) return true;
+	if (!every([relCollName, junCollName, props.allowCustom])) return false;
+	return hasPermission(relCollName, 'create') && hasPermission(junCollName, 'create');
 });
 
 const selectAllowed = computed(() => {
-	if (currentUser?.role.admin_access === true) return true;
-	if (!relationInfo.value) return false;
-	return hasPermission(relationInfo.value.junctionCollection.collection, 'create');
+	if (adminAccess) return true;
+	if (!junCollName) return false;
+	return hasPermission(junCollName, 'create');
 });
 
 const localInput = ref<string>('');
@@ -165,8 +169,8 @@ const suggestedItems = ref<Record<string, any>[]>([]);
 const suggestedItemsSelected = ref<number | null>(null);
 const api = useApi();
 
-const fetchFields = [relationInfo.value?.relatedPrimaryKeyField.field];
-if (props.referencingField && props.referencingField !== relationInfo.value?.relatedPrimaryKeyField.field) {
+const fetchFields = [relPrimaryKeyFieldName];
+if (props.referencingField && props.referencingField !== relPrimaryKeyFieldName) {
 	fetchFields.push(props.referencingField);
 }
 
@@ -191,21 +195,31 @@ watch(
 );
 
 function emitter(newValue: RelationItem[] | null) {
+	// console.log('newValue', newValue);
 	emit('input', newValue);
 }
 
 function deleteItem(item: any) {
-	if (value.value && !Array.isArray(value.value)) return;
+	// console.log('item:', toRaw(item));
+	// console.log('value:', toRaw(value.value));
+	// console.log('junPrimaryKeyName:', junPrimaryKeyName);
 
-	if (relationInfo.value.junctionPrimaryKeyField.field in item) {
-		emitter(value.value.filter((x: any) => x !== item[relationInfo.value.junctionPrimaryKeyField.field]));
+	if (!every([value.value, Array.isArray(value.value), junPrimaryKeyName])) return;
+
+	var remItems: RelationItem[];
+	if (junPrimaryKeyName! in item) {
+		remItems = value.value.filter((x: RelationItem) => x !== parseInt(item[junPrimaryKeyName!]));
 	} else {
-		emitter(value.value.filter((x: any) => x !== item));
+		remItems = value.value.filter((x: RelationItem) => x !== item);
 	}
+
+	emitter(remItems);
 }
 
 function stageItemObject(item: Record<string, RelationItem>) {
-	emitter([...(props.value || []), { [relationInfo.value.junctionField.field]: item }]);
+	if (junFieldName) {
+		emitter([...(props.value || []), { [junFieldName]: item }]);
+	}
 }
 
 async function stageLocalInput() {
@@ -250,33 +264,30 @@ async function stageValue(value: string) {
 }
 
 function itemValueStaged(value: string): boolean {
-	if (!value || !props.referencingField) return false;
-	return !!items.value.find((item) => item[relationInfo.value.junctionField.field][props.referencingField] === value);
+	if (!every([value, props.referencingField, junFieldName])) return false;
+	return !!items.value.find((item) => item[junFieldName!][props.referencingField] === value);
 }
 
 function itemValueAvailable(value: string): boolean {
-	if (!value || !props.referencingField) return false;
+	if (!every([value || props.referencingField])) return false;
 	return !!suggestedItems.value.find((item) => item[props.referencingField] === value);
 }
 
 async function refreshSuggestions(keyword: string) {
 	suggestedItemsSelected.value = null;
-	if (!keyword || keyword.length < 1) {
+	if (!every([keyword, junFieldName, relPrimaryKeyFieldName, relCollName]) || keyword.length === 0) {
 		suggestedItems.value = [];
 		return;
 	}
 
 	const currentIds = items.value
-		.map(
-			(item: RelationItem): RelationFK =>
-				item[relationInfo.value.junctionField.field][relationInfo.value.relatedPrimaryKeyField.field]
-		)
+		.map((item: RelationItem): RelationFK => item[junFieldName!][relPrimaryKeyFieldName])
 		.filter((id: RelationFK) => id === 0 || !!id);
 
 	const filters = [
 		props.filter && parseFilter(props.filter, null),
 		currentIds.length > 0 && {
-			[relationInfo.value.relatedPrimaryKeyField.field]: {
+			[relPrimaryKeyFieldName!]: {
 				_nin: currentIds.join(','),
 			},
 		},
@@ -302,7 +313,7 @@ async function refreshSuggestions(keyword: string) {
 		},
 	};
 
-	const response = await api.get(getEndpoint(relationInfo.value.relatedCollection.collection), query);
+	const response = await api.get(getEndpoint(relCollName!), query);
 	if (response?.data?.data && Array.isArray(response.data.data)) {
 		suggestedItems.value = response.data.data;
 	} else {
@@ -311,7 +322,8 @@ async function refreshSuggestions(keyword: string) {
 }
 
 async function findByKeyword(keyword: string): Promise<Record<string, any> | null> {
-	const response = await api.get(getEndpoint(relationInfo.value.relatedCollection.collection), {
+	if (!every(relCollName, keyword)) return null;
+	const response = await api.get(getEndpoint(relCollName!), {
 		params: {
 			limit: 1,
 			fields: fetchFields,
@@ -332,10 +344,10 @@ function usePreviews(value: Ref<RelationItem[]>) {
 
 	if (!relationInfo.value) return { items, loading };
 
-	const relationalFetchFields = [
-		relationInfo.value.junctionPrimaryKeyField.field,
-		...fetchFields.map((field) => relationInfo.value.junctionField.field + '.' + field),
-	];
+	// const relationalFetchFields = [
+	// 	relationInfo.value.junctionPrimaryKeyField.field,
+	// 	...fetchFields.map((field) => relationInfo.value!.junctionField.field + '.' + field),
+	// ];
 
 	watch(
 		value,
@@ -351,16 +363,14 @@ function usePreviews(value: Ref<RelationItem[]>) {
 	async function update(value: RelationItem[]) {
 		const [ids, staged] = partition(value || [], (item: RelationItem) => typeof item !== 'object');
 
-		if (!ids.length) {
+		if (!every([junPrimaryKeyName, junFieldName, junCollName]) || !ids.length) {
 			items.value = [...staged];
 			return;
 		}
 
 		const cached = items.value.filter(
 			(item: RelationItem) =>
-				typeof item === 'object' &&
-				item[relationInfo.value.junctionPrimaryKeyField.field] &&
-				ids.includes(item[relationInfo.value.junctionPrimaryKeyField.field])
+				typeof item === 'object' && item[junPrimaryKeyName!] && ids.includes(item[junPrimaryKeyName!])
 		);
 
 		if (cached.length === ids.length) {
@@ -373,22 +383,20 @@ function usePreviews(value: Ref<RelationItem[]>) {
 		let fields = {};
 
 		fetchFields.forEach((field) => {
-			const jf = relationInfo.value!.junctionField.field;
-			if (!fields[jf]) fields[jf] = [];
-
-			fields[jf].push(field);
+			if (!fields[junFieldName!]) fields[junFieldName!] = [];
+			fields[junFieldName!].push(field);
 		});
 
 		const queryObj = {
-			operation: relationInfo.value!.junctionCollection.collection,
-			fields: [relationInfo.value!.junctionPrimaryKeyField.field, fields],
+			operation: junCollName!,
+			fields: [junPrimaryKeyName!, fields],
 			variables: {
 				limit: ids.length,
 				filter: {
 					value: { id: { _in: ids } },
-					type: 'game_tags_filter',
+					type: `${junCollName!}_filter`,
 				},
-				sort: { value: [getSortingQuery(relationInfo.value!.junctionField.field).sort], list: [true], type: 'String' },
+				sort: { value: [getSortingQuery(junFieldName!).sort], list: [true], type: 'String' },
 			},
 		};
 
@@ -400,9 +408,9 @@ function usePreviews(value: Ref<RelationItem[]>) {
 			},
 		});
 
-		const game_tags = response?.data?.data?.game_tags;
-		if (game_tags && Array.isArray(game_tags)) {
-			items.value = [...game_tags, ...staged];
+		const res = get(response, `data.data.${junCollName}`, null);
+		if (res && Array.isArray(res)) {
+			items.value = [...res, ...staged];
 		} else {
 			items.value = [...staged];
 		}

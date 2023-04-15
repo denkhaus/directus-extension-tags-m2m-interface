@@ -1,6 +1,6 @@
 {
   "name": "directus-extension-tags-m2m-interface",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "author": {
     "email": "dimitrovadrian+gh@gmail.com",
     "name": "Adrian Dimitrov"
@@ -42,6 +42,7 @@
     "directus-codestyle": "https://github.com/dimitrov-adrian/directus-codestyle.git",
     "gql-query-builder": "^3.8.0",
     "lodash": "^4.17.21",
+    "@types/lodash": "^4.14.194",
     "typescript": "^5.0.4"
   },
   "prettier": "directus-codestyle/prettier",

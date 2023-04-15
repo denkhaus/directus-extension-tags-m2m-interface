@@ -4,6 +4,15 @@
 
 Use M2M relation with quick item referencing in tagging style.
 
+## Changes compared to Adrian's version
+
+- **merged**
+  [commit](https://github.com/Bricklou/directus-extension-tags-m2m-interface/commit/6fa91d9a9e244ffb7dd910decc1d8df9c4a3182f)
+  from [Bricklou](https://github.com/Bricklou) [fix tags search when there are too many tags] and renamed his filter
+  props
+- **refactored** extensive use of nesting vars | **added** lodash types
+- **bumped** version -> 0.8.1
+
 ## Installation
 
 In your Directus installation root
